@@ -53,9 +53,7 @@ class lightcolours:
 
 # log - prints unless JSON output is set
 def log(string):
-    if options.json_output:
-        return
-    print(string)
+    return
 
 
 # Client headers to send to the server during the request.
@@ -115,10 +113,6 @@ def banner():
 
 def colorize(string, alert):
     bcolors = darkcolours
-    if options.colours == "light":
-        bcolors = lightcolours
-    elif options.colours == "none":
-        return string
     color = {
         'error':    bcolors.FAIL + string + bcolors.ENDC,
         'warning':  bcolors.WARNING + string + bcolors.ENDC,
@@ -130,8 +124,7 @@ def colorize(string, alert):
 
 
 def parse_headers(hdrs):
-    global headers
-    headers = dict((x.lower(), y) for x, y in hdrs)
+    return dict((x.lower(), y) for x, y in hdrs)
 
 
 def append_port(target, port):
@@ -194,10 +187,10 @@ def check_target(target):
     returning HEAD response
     '''
     # Recover used options
-    ssldisabled = options.ssldisabled
-    useget = options.useget
-    usemethod = options.usemethod
-    proxy = options.proxy
+    ssldisabled = False
+    useget = True
+    usemethod = False
+    proxy = False
     response = None
 
     target = normalize(target)
@@ -256,26 +249,17 @@ def parse_csp(csp):
         log("\t" + colorize(elements[0], 'info') + (": " + values if values != "" else ""))
 
 
-def main():
-    # Getting options
-    global options
-    options, targets = parse_options()
-
-    port = options.port
-    cookie = options.cookie
-    custom_headers = options.custom_headers
-    information = options.information
-    cache_control = options.cache_control
-    show_deprecated = options.show_deprecated
-    hfile = options.hfile
-    json_output = options.json_output
-
-    # Disabling printing if json output is requested
-    if json_output:
-        global json_headers
-        sys.stdout = open(os.devnull, 'w')
-
-    banner()
+def scan(
+    targets,
+    port=None,
+    cookie=None,
+    custom_headers=None,
+    information=False,
+    cache_control=False,
+    show_deprecated=False,
+    hfile=None,
+    json_output=True
+):
     # Set a custom port if provided
     if cookie is not None:
         client_headers.update({'Cookie': cookie})
@@ -316,21 +300,21 @@ def main():
         json_results = {}
 
         log("[*] Effective URL: {}".format(colorize(rUrl, 'info')))
-        parse_headers(response.getheaders())
+        response_headers = parse_headers(response.getheaders())
         json_headers[f"{rUrl}"] = json_results
         json_results["present"] = {}
         json_results["missing"] = []
 
         # Before parsing, remove X-Frame-Options if there's CSP with frame-ancestors directive
-        if "content-security-policy" in headers.keys() and "frame-ancestors" in headers.get("content-security-policy").lower():
+        if "content-security-policy" in response_headers.keys() and "frame-ancestors" in response_headers.get("content-security-policy").lower():
             sec_headers.pop("X-Frame-Options", None)
-            headers.pop("X-Frame-Options".lower(), None)
+            response_headers.pop("X-Frame-Options".lower(), None)
 
         for safeh in sec_headers:
             lsafeh = safeh.lower()
-            if lsafeh in headers:
+            if lsafeh in response_headers:
                 safe += 1
-                json_results["present"][safeh] = headers.get(lsafeh)
+                json_results["present"][safeh] = response_headers.get(lsafeh)
 
                 # Taking care of special headers that could have bad values
 
@@ -338,31 +322,31 @@ def main():
                 if lsafeh == 'Content-Security-Policy'.lower():
                     log("[*] Header {} is present!".format(
                             colorize(safeh, 'ok')))
-                    parse_csp(headers.get(lsafeh))
+                    parse_csp(response_headers.get(lsafeh))
 
                 # X-XSS-Protection Should be enabled
-                elif lsafeh == 'X-XSS-Protection'.lower() and headers.get(lsafeh) == '0':
+                elif lsafeh == 'X-XSS-Protection'.lower() and response_headers.get(lsafeh) == '0':
                     log("[*] Header {} is present! (Value: {})".format(
                             colorize(safeh, 'ok'),
-                            colorize(headers.get(lsafeh), 'warning')))
+                            colorize(response_headers.get(lsafeh), 'warning')))
 
                 # unsafe-url policy is more insecure compared to the default/unset value
-                elif lsafeh == 'Referrer-Policy'.lower() and headers.get(lsafeh) == 'unsafe-url':
+                elif lsafeh == 'Referrer-Policy'.lower() and response_headers.get(lsafeh) == 'unsafe-url':
                     log("[!] Insecure header {} is set! (Value: {})".format(
                             colorize(safeh, 'warning'),
-                            colorize(headers.get(lsafeh), 'error')))
+                            colorize(response_headers.get(lsafeh), 'error')))
 
                 # check for max-age=0 in HSTS
-                elif lsafeh == 'Strict-Transport-Security'.lower() and "max-age=0" in headers.get(lsafeh):
+                elif lsafeh == 'Strict-Transport-Security'.lower() and "max-age=0" in response_headers.get(lsafeh):
                     log("[!] Insecure header {} is set! (Value: {})".format(
                             colorize(safeh, 'warning'),
-                            colorize(headers.get(lsafeh), 'error')))
+                            colorize(response_headers.get(lsafeh), 'error')))
 
                 # Printing generic message if not specified above
                 else:
                     log("[*] Header {} is present! (Value: {})".format(
                             colorize(safeh, 'ok'),
-                            headers.get(lsafeh)))
+                            response_headers.get(lsafeh)))
             else:
                 unsafe += 1
                 json_results["missing"].append(safeh)
@@ -385,13 +369,13 @@ def main():
             log("")
             for infoh in information_headers:
                 linfoh = infoh.lower()
-                if linfoh in headers:
-                    json_headers["information_disclosure"][infoh] = headers.get(linfoh)
+                if linfoh in response_headers:
+                    json_headers["information_disclosure"][infoh] = response_headers.get(linfoh)
                     i_chk = True
                     log("[!] Possible information disclosure: \
 header {} is present! (Value: {})".format(
                             colorize(infoh, 'warning'),
-                            headers.get(linfoh)))
+                            response_headers.get(linfoh)))
             if not i_chk:
                 log("[*] No information disclosure headers detected")
 
@@ -401,13 +385,13 @@ header {} is present! (Value: {})".format(
             log("")
             for cacheh in cache_headers:
                 lcacheh = cacheh.lower()
-                if lcacheh in headers:
-                    json_headers["caching"][cacheh] = headers.get(lcacheh)
+                if lcacheh in response_headers:
+                    json_headers["caching"][cacheh] = response_headers.get(lcacheh)
                     c_chk = True
                     log("[!] Cache control header {} is present! \
 (Value: {})".format(
                             colorize(cacheh, 'info'),
-                            headers.get(lcacheh)))
+                            response_headers.get(lcacheh)))
             if not c_chk:
                 log("[*] No caching headers detected")
 
@@ -415,8 +399,7 @@ header {} is present! (Value: {})".format(
         json_out.update(json_headers)
 
     if json_output:
-        sys.stdout = sys.__stdout__
-        print(json.dumps(json_out))
+        return json_out
 
 
 
@@ -475,4 +458,7 @@ def parse_options():
     return options, targets
 
 if __name__ == "__main__":
-    main()
+    response = scan(
+        targets=["https://hirefly.ai"],
+    )
+    print(response)
